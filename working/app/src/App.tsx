@@ -16,6 +16,7 @@ type Source = {
   last_success_at: string | null;
   last_error: string | null;
   article_count: number;
+  collection_status: "pending" | "empty" | "ready" | "error";
 };
 type Article = {
   id: string;
@@ -90,6 +91,7 @@ function message(error: unknown) {
     SOURCE_UNAVAILABLE: "add.unreachable",
     NETWORK_ERROR: "common.networkError",
     SERVER_ERROR: "common.serverError",
+    STORAGE_ERROR: "common.serverError",
     NOT_FOUND: "remove.notFound",
     SOURCE_CHANGED: "site.invalidFeed",
   };
@@ -186,14 +188,22 @@ export function App() {
     setAddError("");
     setNotice(null);
     try {
-      const result = await api<{ added: number }>("/sources", {
-        method: "POST",
-        body: JSON.stringify({ url }),
-      });
+      const result = await api<{ added: number; collectionStatus: string }>(
+        "/sources",
+        {
+          method: "POST",
+          body: JSON.stringify({ url }),
+        },
+      );
       setUrl("");
       setNotice({
-        kind: "success",
-        text: c(result.added ? "add.successWithArticles" : "add.success"),
+        kind: result.collectionStatus === "error" ? "warning" : "success",
+        text:
+          result.collectionStatus === "error"
+            ? "האתר נוסף למעקב, אך שמירת הכתבות נכשלה. ננסה שוב בסריקה הבאה."
+            : result.collectionStatus === "empty"
+              ? "האתר נוסף למעקב. האיסוף הסתיים ללא כתבות חדשות."
+              : c(result.added ? "add.successWithArticles" : "add.success"),
       });
       await load(true);
     } catch (error) {
@@ -567,11 +577,15 @@ export function App() {
                             className={`source-status ${source.last_error ? "is-error" : ""}`}
                           >
                             <span className="status-dot" />
-                            {c(
-                              source.last_error
-                                ? "site.statusError"
-                                : "site.statusActive",
-                            )}
+                            במעקב ·{" "}
+                            {
+                              {
+                                pending: "ממתין לאיסוף",
+                                empty: "טרם נאספו כתבות",
+                                ready: "כתבות נאספו",
+                                error: "האיסוף נכשל",
+                              }[source.collection_status]
+                            }
                           </span>
                         </div>
                         <a

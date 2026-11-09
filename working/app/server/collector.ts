@@ -53,6 +53,26 @@ export async function parseFeed(
   text: string,
   url: string,
 ): Promise<{ name: string; entries: Entry[]; method: Method } | null> {
+  if (/<urlset[\s>]/i.test(text) && /<news:news[\s>]/i.test(text)) {
+    if (/<!ENTITY|<!DOCTYPE/i.test(text)) throw new AppError("INVALID_FEED");
+    const $ = cheerio.load(text, { xml: true });
+    const list: Entry[] = [];
+    $("urlset > url").each((_, el) => {
+      const item = $(el);
+      list.push({
+        title: cleanText(item.find("news\\:title").text()),
+        url: articleUrl(item.children("loc").text(), url) ?? "",
+        publishedAt: publicationDate(
+          item.find("news\\:publication_date").text(),
+        ),
+      });
+    });
+    return {
+      name: cleanText($("news\\:name").first().text()),
+      method: "rss",
+      entries: entries(list),
+    };
+  }
   if (text.trimStart().startsWith("{")) {
     try {
       const data = JSON.parse(text);
@@ -180,6 +200,19 @@ export function parseHtml(text: string, url: string): Entry[] {
       /* malformed structured block */
     }
   });
+  if (
+    !found.length &&
+    $('meta[property="og:type"]').attr("content") === "article"
+  ) {
+    found.push({
+      title: cleanText($('meta[property="og:title"]').attr("content")),
+      url:
+        articleUrl($('link[rel="canonical"]').attr("href") ?? url, url) ?? "",
+      publishedAt: publicationDate(
+        $('meta[property="article:published_time"]').attr("content"),
+      ),
+    });
+  }
   $("article").each((_, el) => {
     const item = $(el);
     const link = item.find("h1 a, h2 a, h3 a").first();
@@ -193,8 +226,59 @@ export function parseHtml(text: string, url: string): Entry[] {
   });
   return entries(found);
 }
+/** Candidate links are not articles until their public page metadata confirms it. */
+export function articleCandidates(text: string, base: string): string[] {
+  const $ = cheerio.load(text);
+  const result = new Set<string>();
+  $("a[href]").each((_, el) => {
+    const a = $(el);
+    if (a.closest('nav,footer,header,[role="navigation"]').length) return;
+    const title = cleanText(
+      a
+        .find('h1,h2,h3,h4,[itemprop="headline"],[data-tb-title]')
+        .first()
+        .text() || a.text(),
+    );
+    const url = articleUrl(a.attr("href"), base);
+    if (!url || title.length < 20 || title.length > 500) return;
+    const target = new URL(url);
+    if (target.origin !== new URL(base).origin) return;
+    if (
+      !/\/(?:articles?|stories|story)\/|\/\d{4}\/\d{2}\//i.test(
+        target.pathname,
+      ) &&
+      !a.find('h1,h2,h3,[itemprop="headline"]').length
+    )
+      return;
+    if (target.href !== base) result.add(url);
+  });
+  return [...result].slice(0, 12);
+}
 export class Collector {
   constructor(private http: Pick<CollectorHttp, "get">) {}
+  private async htmlArticles(text: string, url: string) {
+    const direct = parseHtml(text, url);
+    if (direct.length) return direct;
+    const found: Entry[] = [];
+    let lastError: unknown;
+    const deadline = Date.now() + 45000;
+    for (const candidate of articleCandidates(text, url)) {
+      if (Date.now() >= deadline) break;
+      try {
+        const page = await this.http.get(candidate);
+        // Each request still uses the same robots, timeout and SSRF protections.
+        found.push(
+          ...parseHtml(page.text, page.url).filter(
+            (e) => e.url === page.url || e.url === candidate,
+          ),
+        );
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    if (!found.length && lastError) throw lastError;
+    return entries(found);
+  }
   async discover(input: string): Promise<Discovered> {
     const siteUrl = normalizeUrl(input);
     const page = await this.http.get(siteUrl);
@@ -213,6 +297,12 @@ export class Collector {
         $('meta[property="og:site_name"]').attr("content") ?? $("title").text(),
       ) || new URL(page.url).hostname;
     const candidates: string[] = [];
+    // Publishers may advertise feeds as ordinary anchors rather than head links.
+    $("a[href]").each((_, el) => {
+      const href = articleUrl($(el).attr("href"), page.url);
+      if (href && /(?:rss|atom|feed)/i.test(new URL(href).pathname))
+        candidates.push(href);
+    });
     $('link[rel="alternate"]').each((_, el) => {
       const type = $(el).attr("type") ?? "";
       if (/rss|atom|feed\+json/i.test(type)) {
@@ -220,6 +310,16 @@ export class Collector {
         if (href) candidates.push(href);
       }
     });
+    try {
+      const robots = await this.http.get(new URL("/robots.txt", page.url).href);
+      for (const match of robots.text.matchAll(
+        /^Sitemap:\s*(https?:\/\/\S+)\s*$/gim,
+      )) {
+        if (/news/i.test(match[1])) candidates.push(match[1]);
+      }
+    } catch {
+      /* Access policy is enforced again for every candidate. */
+    }
     for (const path of ["/feed/", "/rss.xml", "/feed.xml"])
       candidates.push(new URL(path, page.url).href);
     for (const candidate of [...new Set(candidates)].slice(0, 6)) {
@@ -260,7 +360,7 @@ export class Collector {
         /* Structured public HTML may still work. */
       }
     }
-    const html = parseHtml(page.text, page.url);
+    const html = await this.htmlArticles(page.text, page.url);
     if (html.length)
       return {
         name,
@@ -276,7 +376,7 @@ export class Collector {
     if (source.method === "wordpress")
       return parseWordpress(page.text, page.url);
     if (source.method === "html") {
-      const result = parseHtml(page.text, page.url);
+      const result = await this.htmlArticles(page.text, page.url);
       if (!result.length) throw new AppError("SOURCE_CHANGED");
       return result;
     }

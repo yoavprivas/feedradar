@@ -286,3 +286,75 @@ test("robots unavailable is fail closed; robots missing allows fetching", async 
   );
   assert.equal((await allowed.get("https://example.com")).text, "ok");
 });
+
+test("News sitemap discovery is generic and uses publication date, not lastmod", async () => {
+  const xml =
+    '<urlset xmlns:news="http://www.google.com/schemas/sitemap-news/0.9"><url><loc>https://example.com/a</loc><lastmod>2026-11-09T12:00:00Z</lastmod><news:news><news:publication><news:name>News</news:name></news:publication><news:title>Title</news:title><news:publication_date>2026-11-08T10:00:00Z</news:publication_date></news:news></url></urlset>';
+  const collector = new Collector({
+    get: async (url) => ({
+      url,
+      status: 200,
+      contentType: "text/plain",
+      text: url.endsWith("robots.txt")
+        ? "Sitemap: https://example.com/news-sitemap.xml"
+        : url.endsWith("news-sitemap.xml")
+          ? xml
+          : "<title>Home</title>",
+    }),
+  });
+  const source = await collector.discover("https://example.com");
+  assert.equal(source.collectionUrl, "https://example.com/news-sitemap.xml");
+  assert.equal(source.entries[0].publishedAt, "2026-11-08T10:00:00.000Z");
+});
+
+test("Homepage links require article metadata, reject navigation and external hosts", async () => {
+  const seen: string[] = [];
+  const collector = new Collector({
+    get: async (url) => {
+      seen.push(url);
+      let text = "<title>Home</title>";
+      if (url === "https://example.com/")
+        text +=
+          '<nav><a href="/article/nav"><h2>Navigation link that must never be fetched</h2></a></nav><a href="https://other.example/article/x"><h2>External link that must never be fetched</h2></a><a href="/article/a">A sufficiently long news headline</a><a href="/article/not-news">Another sufficiently long headline</a>';
+      if (url.endsWith("/article/a"))
+        text =
+          '<meta property="og:type" content="article"><meta property="og:title" content="Confirmed news"><meta property="article:published_time" content="2026-11-08T10:00:00Z"><link rel="canonical" href="/article/a">';
+      return { url, text, status: 200, contentType: "text/html" };
+    },
+  });
+  const result = await collector.discover("https://example.com");
+  assert.equal(result.method, "html");
+  assert.equal(result.entries.length, 1);
+  assert.equal(result.entries[0].title, "Confirmed news");
+  assert.equal(result.entries[0].publishedAt, "2026-11-08T10:00:00.000Z");
+  assert(!seen.some((u) => u.includes("/nav") || u.includes("other.example")));
+  assert.deepEqual(
+    await collector.collect({
+      method: "html",
+      collection_url: "https://example.com/",
+    }),
+    result.entries,
+  );
+});
+
+test("Candidate article requests still enforce robots restrictions", async () => {
+  const seen: string[] = [];
+  const collector = new Collector(
+    new CollectorHttp(async (url) => {
+      seen.push(url);
+      return {
+        url,
+        status: 200,
+        contentType: "text/html",
+        text: url.endsWith("robots.txt")
+          ? "User-agent: *\nDisallow: /article/"
+          : '<a href="/article/blocked">A sufficiently long news headline</a>',
+      };
+    }, 0),
+  );
+  await assert.rejects(
+    collector.discover("https://example.com"),
+    (e: any) => e.code === "ROBOTS_DENIED",
+  );
+  assert(!seen.some((u) => u.includes("/article/")));
+});

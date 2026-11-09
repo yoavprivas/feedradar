@@ -95,7 +95,30 @@ export function createApp(
     adding = true;
     try {
       const discovered = await collector.discover(url);
-      res.status(201).json(await repo.addSource(discovered));
+      const { id } = await repo.addSource(discovered);
+      try {
+        const added = await repo.saveScan(id, discovered.entries);
+        res
+          .status(201)
+          .json({
+            id,
+            added,
+            registrationStatus: "saved",
+            collectionStatus: discovered.entries.length ? "ready" : "empty",
+          });
+      } catch (error) {
+        const code = "STORAGE_ERROR";
+        await repo.failed(id, code);
+        res
+          .status(201)
+          .json({
+            id,
+            added: 0,
+            registrationStatus: "saved",
+            collectionStatus: "error",
+            collectionError: code,
+          });
+      }
     } finally {
       adding = false;
     }

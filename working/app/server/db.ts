@@ -24,7 +24,10 @@ export class Repository {
   }
   async sources(): Promise<Source[]> {
     const result = await this.pool.query(
-      `SELECT s.*, (SELECT count(*)::int FROM articles a WHERE a.source_id=s.id) AS article_count FROM sources s ORDER BY s.created_at, s.id`,
+      `SELECT s.*, (SELECT count(*)::int FROM articles a WHERE a.source_id=s.id) AS article_count,
+       CASE WHEN s.last_error IS NOT NULL THEN 'error' WHEN s.last_success_at IS NULL THEN 'pending'
+       WHEN EXISTS(SELECT 1 FROM articles a WHERE a.source_id=s.id) THEN 'ready' ELSE 'empty' END AS collection_status
+       FROM sources s ORDER BY s.created_at, s.id`,
     );
     return result.rows;
   }
@@ -65,7 +68,7 @@ export class Repository {
       await client.query("BEGIN");
       const id = randomUUID();
       await client.query(
-        "INSERT INTO sources(id,name,site_url,collection_url,method,last_checked_at,last_success_at) VALUES($1,$2,$3,$4,$5,now(),now())",
+        "INSERT INTO sources(id,name,site_url,collection_url,method) VALUES($1,$2,$3,$4,$5)",
         [
           id,
           discovery.name,
@@ -74,9 +77,8 @@ export class Repository {
           discovery.method,
         ],
       );
-      const added = await this.writeEntries(client, id, discovery.entries);
       await client.query("COMMIT");
-      return { id, added };
+      return { id };
     } catch (e: any) {
       await client.query("ROLLBACK");
       if (e.code === "23505") throw new AppError("DUPLICATE_SITE", "", 409);

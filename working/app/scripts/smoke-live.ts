@@ -2,7 +2,12 @@ import { Collector } from "../server/collector.ts";
 import { CollectorHttp, createTransport } from "../server/network.ts";
 import { errorCode } from "../server/types.ts";
 const collector = new Collector(new CollectorHttp(createTransport(12000)));
-for (const url of ["https://nodejs.org/en/blog", "https://www.nasa.gov"]) {
+for (const url of [
+  "https://www.ynet.co.il",
+  "https://www.calcalist.co.il",
+  "https://www.sport5.co.il",
+  "https://www.google.com/finance/",
+]) {
   const start = Date.now();
   try {
     const result = await collector.discover(url);

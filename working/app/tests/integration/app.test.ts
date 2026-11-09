@@ -94,6 +94,8 @@ test("PostgreSQL + HTTP API complete lifecycle", async (t) => {
       const data = await response.json();
       firstId = data.id;
       assert.equal(data.added, 3);
+      assert.equal(data.registrationStatus, "saved");
+      assert.equal(data.collectionStatus, "ready");
       assert.equal((await repo.sources()).length, 1);
     });
     await t.test("duplicate add is rejected atomically", async () => {
@@ -245,6 +247,35 @@ test("PostgreSQL + HTTP API complete lifecycle", async (t) => {
           (await request(`/sources/${firstId}`, "DELETE")).status,
           404,
         );
+      },
+    );
+    await t.test(
+      "initial collection failure preserves registration and can recover",
+      async () => {
+        const original = repo.saveScan;
+        repo.saveScan = async () => {
+          throw new Error("simulated storage failure");
+        };
+        let data: any;
+        try {
+          const response = await request("/sources", "POST", {
+            url: "https://storage.example.org",
+          });
+          assert.equal(response.status, 201);
+          data = await response.json();
+          assert.equal(data.registrationStatus, "saved");
+          assert.equal(data.collectionStatus, "error");
+          assert.equal(data.collectionError, "STORAGE_ERROR");
+          const stored = (await repo.sources()).find((s) => s.id === data.id)!;
+          assert.equal(stored.last_success_at, null);
+          assert.equal(stored.article_count, 0);
+        } finally {
+          repo.saveScan = original;
+        }
+        await scanner.scan();
+        const recovered = (await repo.sources()).find((s) => s.id === data.id)!;
+        assert.equal(recovered.last_error, null);
+        assert.equal(recovered.article_count, 4);
       },
     );
   } finally {
