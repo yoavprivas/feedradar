@@ -42,6 +42,8 @@ jobs:
       SERVICE: feedradar
       IMAGE: us-central1-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/feedradar/app:${{ github.sha }}
     steps:
+      - name: Verify existing project
+        run: test "$PROJECT" = "project-43592e87-a1ec-43b7-bb4"
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.sha }}
@@ -63,7 +65,8 @@ jobs:
         run: |
           python - <<'PY'
           import json, os
-          values = {"AUTH_MODE":"password", "SCHEDULER_MODE":"external", "SCAN_INTERVAL_MINUTES":"60", "PUBLIC_ORIGIN":os.environ["PUBLIC_ORIGIN"], "SCHEDULER_AUDIENCE":os.environ["PUBLIC_ORIGIN"], "SCHEDULER_SERVICE_ACCOUNT":os.environ["SCHEDULER_ACCOUNT"], "SCHEDULER_JOB_NAME":os.environ["SCHEDULER_JOB"]}
+          if os.environ['PROJECT'] != 'project-43592e87-a1ec-43b7-bb4': raise ValueError('Deployment restricted to the approved existing project')
+          values = {"AUTH_MODE":"password", "SCHEDULER_MODE":"external", "SCAN_INTERVAL_MINUTES":"60", "DATABASE_CA_FILE":"/app/backend/certs/supabase-ca.crt", "PUBLIC_ORIGIN":os.environ["PUBLIC_ORIGIN"], "SCHEDULER_AUDIENCE":os.environ["PUBLIC_ORIGIN"], "SCHEDULER_SERVICE_ACCOUNT":os.environ["SCHEDULER_ACCOUNT"], "SCHEDULER_JOB_NAME":os.environ["SCHEDULER_JOB"]}
           if not all(values.values()): raise ValueError('Missing deployment configuration')
           with open('cloud-env.json','w') as f: json.dump(values,f)
           PY
