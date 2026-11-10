@@ -1,5 +1,5 @@
 """Run only on an authenticated, ephemeral GitHub Linux runner. Never log secrets."""
-import os, pathlib, subprocess, tempfile, urllib.parse, datetime
+import os, pathlib, subprocess, tempfile, urllib.parse, datetime, re
 
 PROJECT = 'project-43592e87-a1ec-43b7-bb4'
 POSTGRES = 'postgres:17-bookworm@sha256:665dc7b37ac52a17e298511414c21d23ffa4e6a6ef6225b3e5d59c7afb35e994'
@@ -7,7 +7,9 @@ POSTGRES = 'postgres:17-bookworm@sha256:665dc7b37ac52a17e298511414c21d23ffa4e6a6
 def run(args, **kwargs):
     result = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **kwargs)
     if result.returncode:
-        raise RuntimeError('Backup operation failed: ' + args[0])
+        error = result.stderr.decode(errors='replace')
+        error = re.sub(r'postgres(?:ql)?://\S+|ya29\.[\w.-]+|eyJ[\w.-]+', '[redacted]', error)
+        raise RuntimeError('Backup operation failed: ' + args[0] + ': ' + error[:2500])
     return result.stdout
 
 if os.environ.get('GCP_PROJECT_ID') != PROJECT:
