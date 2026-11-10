@@ -1,0 +1,36 @@
+name: Encrypted daily database backup
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '23 3 * * *'
+permissions:
+  contents: read
+concurrency:
+  group: database-backup
+  cancel-in-progress: false
+jobs:
+  backup:
+    if: vars.CLOUD_BACKUP_ENABLED == 'true'
+    environment: backup
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      BACKUP_BUCKET: ${{ vars.BACKUP_BUCKET }}
+      BACKUP_PUBLIC_KEY: ${{ vars.BACKUP_PUBLIC_KEY }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.BACKUP_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db
+      - run: python scripts/cloud-backup.py
