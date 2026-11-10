@@ -9,8 +9,6 @@ coverage/
 .tools/
 test-results/
 playwright-report/
-working/artifacts/
-working/*
-!working/app/
+working/
 finals/
 project-context.md

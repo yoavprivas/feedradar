@@ -1,0 +1,39 @@
+name: feedradar-local
+services:
+  db:
+    image: postgres:17-bookworm@sha256:665dc7b37ac52a17e298511414c21d23ffa4e6a6ef6225b3e5d59c7afb35e994
+    environment:
+      POSTGRES_USER: feedradar
+      POSTGRES_PASSWORD: ${DOCKER_DB_PASSWORD:?Run scripts/init-docker.ps1 first}
+      POSTGRES_DB: feedradar_docker
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U feedradar -d feedradar_docker"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+  app:
+    build: .
+    environment:
+      DATABASE_URL: postgresql://feedradar:${DOCKER_DB_PASSWORD}@db:5432/feedradar_docker
+      HOST: 0.0.0.0
+      PORT: 8080
+      AUTH_MODE: local
+      SCHEDULER_MODE: local
+    ports:
+      - "127.0.0.1:4311:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    init: true
+    stop_grace_period: 10s
+    restart: unless-stopped
+volumes:
+  postgres-data:

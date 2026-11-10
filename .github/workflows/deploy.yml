@@ -1,0 +1,74 @@
+name: Deploy approved revision
+on:
+  workflow_dispatch:
+    inputs:
+      approved_sha:
+        description: Full 40-character SHA explicitly approved by the owner (must equal main HEAD)
+        required: true
+      approval:
+        description: Type DEPLOY to confirm the approved cloud action
+        required: true
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+jobs:
+  gate:
+    if: vars.CLOUD_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        env:
+          APPROVED_SHA: ${{ inputs.approved_sha }}
+          APPROVAL: ${{ inputs.approval }}
+        with:
+          script: |
+            if (context.ref !== 'refs/heads/main' || process.env.APPROVAL !== 'DEPLOY' || process.env.APPROVED_SHA !== context.sha) throw new Error('Explicit approval of current main SHA required');
+            const {data} = await github.rest.actions.listWorkflowRuns({...context.repo, workflow_id:'ci.yml', head_sha:context.sha, event:'push', status:'success'});
+            if (!data.workflow_runs.some(run => run.head_sha === context.sha && run.head_branch === 'main')) throw new Error('Successful push CI required for this exact revision');
+  deploy:
+    needs: gate
+    environment: production
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      PROJECT: ${{ vars.GCP_PROJECT_ID }}
+      REGION: us-central1
+      SERVICE: feedradar
+      IMAGE: us-central1-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/feedradar/app:${{ github.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
+      - run: gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+      - run: docker build --tag "$IMAGE" .
+      - run: docker push "$IMAGE"
+      - name: Deploy (does not create IAM bindings)
+        env:
+          RUNTIME_ACCOUNT: ${{ vars.RUNTIME_SERVICE_ACCOUNT }}
+          PUBLIC_ORIGIN: ${{ vars.PUBLIC_ORIGIN }}
+          SCHEDULER_ACCOUNT: ${{ vars.SCHEDULER_SERVICE_ACCOUNT }}
+          SCHEDULER_JOB: ${{ vars.SCHEDULER_JOB_NAME }}
+        run: |
+          python - <<'PY'
+          import json, os
+          values = {"AUTH_MODE":"password", "SCHEDULER_MODE":"external", "SCAN_INTERVAL_MINUTES":"60", "PUBLIC_ORIGIN":os.environ["PUBLIC_ORIGIN"], "SCHEDULER_AUDIENCE":os.environ["PUBLIC_ORIGIN"], "SCHEDULER_SERVICE_ACCOUNT":os.environ["SCHEDULER_ACCOUNT"], "SCHEDULER_JOB_NAME":os.environ["SCHEDULER_JOB"]}
+          if not all(values.values()): raise ValueError('Missing deployment configuration')
+          with open('cloud-env.json','w') as f: json.dump(values,f)
+          PY
+          gcloud run deploy "$SERVICE" --project "$PROJECT" --region "$REGION" --image "$IMAGE" \
+            --service-account "$RUNTIME_ACCOUNT" --port 8080 --cpu 1 --memory 512Mi \
+            --min 0 --max 1 --concurrency 8 --timeout 300 --cpu-throttling \
+            --env-vars-file cloud-env.json \
+            --set-secrets DATABASE_URL=feedradar-database-url:latest,ADMIN_PASSWORD_HASH=feedradar-admin-password-hash:latest --quiet
