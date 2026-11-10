@@ -1,5 +1,7 @@
 # FeedRadar
 
+Cloud deployment, updates, backup recovery and cost controls are documented in [DEPLOYMENT.md](DEPLOYMENT.md).
+
 FeedRadar brings articles from websites you choose into a focused, chronological feed. Its Hebrew, right-to-left interface shows the headline, source, and publication time, with a link to the original article, without images or summaries.
 
 ## Features
