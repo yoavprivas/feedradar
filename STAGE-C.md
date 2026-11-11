@@ -1,8 +1,9 @@
 # Stage C — Pub/Sub implementation and release gate
 
-Status: local Pub/Sub implementation; cloud acceptance NOT complete. Redis implementation
-waits for successful Pub/Sub cloud acceptance, as requested. No push or cloud mutation is
-authorized by the local implementation approval. This document travels with the source.
+Status, 2026-11-11: Pub/Sub cloud acceptance PASSED after explicit owner approval of push,
+GCP/IAM configuration and deployment. Production source is e83089214bd7efa6c4c1c61f9445771ffde1bfed.
+Redis was implemented locally afterward; its separate cloud approval/credentials/verification
+remain pending. See [REDIS.md](REDIS.md). Stage C as a whole is NOT complete.
 
 ## Architecture
 
@@ -58,7 +59,7 @@ Logs: `scan_queued`, `publish_failed`, `task_started`, `task_complete`, `task_fa
 `task_duplicate`, `task_dead_letter`, `dead_letter_invalid`, `worker_request_failed`.
 They contain task/source IDs, attempt numbers and safe error codes, never credential values.
 
-## Proposed cloud changes — execute only after explicit owner approval
+## Cloud configuration — deployed after explicit owner approval
 
 Use ONLY existing project `project-43592e87-a1ec-43b7-bb4`, number `660376222507`, region
 `us-central1`. No billing upgrade, VPC connector, Memorystore, load balancer or fixed-cost
@@ -139,6 +140,23 @@ nonsecret repository variables only when approved:
    revision names, message/task IDs, attempts and CI/deploy links in the verification report.
 7. Only after Pub/Sub acceptance, implement Redis, securely provision its secrets, and request
    approval for the Redis deployment/actual cache acceptance tests.
+
+Accepted Pub/Sub evidence: CI https://github.com/yoavprivas/feedradar/actions/runs/42985842064;
+activation deployment https://github.com/yoavprivas/feedradar/actions/runs/42986164156.
+Web revision feedradar-00006-d92; private worker feedradar-worker-00002-btc. Manual batch
+39c1a798-b650-444c-a8bc-39aa41c240ed processed both sources and added eight articles. Actual
+Scheduler batch 11e1ad3d-ac37-4b1e-8f36-7149c84ced31, key scheduled:2026-11-11T08:28:00.000Z,
+processed both sources and added one article. All 218 original articles and original sources
+were preserved; the final observed count was 227. Scheduler is enabled with 28 * * * * UTC.
+
+An isolated temporary cloud worker/schema verified concurrency two, successful broker retry
+on attempt two, no-op duplicate delivery, and actual forwarding after five failures. The DL
+message was pulled/inspected with CloudPubSubDeadLetterSourceDeliveryCount=5. Temporary test
+services/topics/subscriptions/schema/role/secret were removed; production resources remained.
+The test retry policy was accelerated to 10–20 seconds for the last failure attempts;
+production remains 60–600 seconds. Forced early Scheduler execution returned 400 during
+verification; later scheduled-time execution succeeded. Do not treat a forced request without
+an accepted schedule-time header as proof of automatic operation.
 
 Rollback: pause Scheduler and new manual requests, let in-flight task leases finish or expire,
 stop/drain Pub/Sub delivery, then restore sync mode or the prior web revision. Preserve tasks,

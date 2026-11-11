@@ -138,7 +138,7 @@ export function createApp(
       offset > 1000000
     )
       throw new AppError("INVALID_INPUT");
-    res.json(await repo.feed(limit, offset));
+    res.json(await repo.feed(limit, offset, res.locals.feedRevision));
   });
   let adding = false;
   app.post("/api/sources", async (req, res) => {

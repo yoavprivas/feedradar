@@ -1,8 +1,8 @@
 # FeedRadar cloud operations
 
-Stage C local Pub/Sub changes and the required staged release/IAM configuration are documented
-in [STAGE-C.md](STAGE-C.md). They have not been deployed. Stage B remains the last accepted
-cloud architecture until the Stage C cloud verification gates pass. Redis follows Pub/Sub acceptance.
+Stage C Pub/Sub deployment and cloud verification passed on 2026-11-11; see [STAGE-C.md](STAGE-C.md).
+Redis was implemented locally afterward and awaits its own cloud release/verification;
+see [REDIS.md](REDIS.md). Stage C as a whole remains open.
 
 ## Existing environment
 

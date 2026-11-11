@@ -70,12 +70,14 @@ jobs:
           SUBSCRIPTION: ${{ vars.PUBSUB_SUBSCRIPTION }}
           DEAD_SUBSCRIPTION: ${{ vars.PUBSUB_DEAD_SUBSCRIPTION }}
           WORKER_ENABLED: ${{ vars.WORKER_ENABLED }}
+          REDIS_ENABLED: ${{ vars.REDIS_ENABLED }}
+          CACHE_NAMESPACE: ${{ vars.CACHE_NAMESPACE }}
         run: |
           python - <<'PY'
           import json, os
           if os.environ['PROJECT'] != 'project-43592e87-a1ec-43b7-bb4': raise ValueError('Deployment restricted to the approved existing project')
           values = {"AUTH_MODE":"password", "SCHEDULER_MODE":"external", "SCAN_INTERVAL_MINUTES":"60", "DATABASE_CA_FILE":"/app/backend/certs/supabase-ca.crt", "PUBLIC_ORIGIN":os.environ["PUBLIC_ORIGIN"], "SCHEDULER_AUDIENCE":os.environ["PUBLIC_ORIGIN"], "SCHEDULER_SERVICE_ACCOUNT":os.environ["SCHEDULER_ACCOUNT"], "SCHEDULER_JOB_NAME":os.environ["SCHEDULER_JOB"]}
-          for flag in ('PUBSUB_ENABLED','WORKER_ENABLED'):
+          for flag in ('PUBSUB_ENABLED','WORKER_ENABLED','REDIS_ENABLED'):
             if os.environ[flag] not in ('','false','true'): raise ValueError('Invalid '+flag)
           enabled = os.environ['PUBSUB_ENABLED'] == 'true'
           worker_enabled = os.environ['WORKER_ENABLED'] == 'true'
@@ -83,6 +85,8 @@ jobs:
           values['SCAN_MODE'] = 'pubsub' if enabled else 'sync'
           if enabled:
             values['PUBSUB_TOPIC'] = os.environ['PUBSUB_TOPIC']
+          if os.environ['REDIS_ENABLED'] == 'true':
+            values.update(CACHE_NAMESPACE=os.environ['CACHE_NAMESPACE'], CACHE_TTL_SECONDS='60', CACHE_TIMEOUT_MS='500')
           if worker_enabled:
             worker = {'DATABASE_CA_FILE':values['DATABASE_CA_FILE'], 'PUBSUB_PUSH_AUDIENCE':os.environ['WORKER_ORIGIN'], 'PUBSUB_PUSH_SERVICE_ACCOUNT':os.environ['PUSH_ACCOUNT'], 'PUBSUB_SUBSCRIPTION':os.environ['SUBSCRIPTION'], 'PUBSUB_DEAD_SUBSCRIPTION':os.environ['DEAD_SUBSCRIPTION']}
             if not all(worker.values()) or not os.environ['WORKER_ACCOUNT']: raise ValueError('Missing worker configuration')
@@ -103,8 +107,12 @@ jobs:
               exit 1
             fi
           fi
+          web_secrets="DATABASE_URL=feedradar-database-url:latest,ADMIN_PASSWORD_HASH=feedradar-admin-password-hash:latest"
+          if [ "$REDIS_ENABLED" = "true" ]; then
+            web_secrets="$web_secrets,UPSTASH_REDIS_REST_URL=feedradar-redis-rest-url:latest,UPSTASH_REDIS_REST_TOKEN=feedradar-redis-rest-token:latest"
+          fi
           gcloud run deploy "$SERVICE" --project "$PROJECT" --region "$REGION" --image "$IMAGE" \
             --service-account "$RUNTIME_ACCOUNT" --port 8080 --cpu 1 --memory 512Mi \
             --min 0 --max 1 --concurrency 8 --timeout 300 --cpu-throttling \
             --env-vars-file cloud-env.json \
-            --set-secrets DATABASE_URL=feedradar-database-url:latest,ADMIN_PASSWORD_HASH=feedradar-admin-password-hash:latest --quiet
+            --set-secrets "$web_secrets" --quiet

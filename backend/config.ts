@@ -21,7 +21,16 @@ export const config = {
   schedulerJob: process.env.SCHEDULER_JOB_NAME,
   scanMode: process.env.SCAN_MODE ?? "sync",
   pubsubTopic: process.env.PUBSUB_TOPIC,
+  redisUrl: process.env.UPSTASH_REDIS_REST_URL?.trim(),
+  redisToken: process.env.UPSTASH_REDIS_REST_TOKEN?.trim(),
+  cacheNamespace: process.env.CACHE_NAMESPACE,
+  cacheTtlSeconds: number("CACHE_TTL_SECONDS", 60, 10, 300),
+  cacheTimeoutMs: number("CACHE_TIMEOUT_MS", 500, 50, 2000),
 };
+if (!!config.redisUrl !== !!config.redisToken)
+  throw new Error("Redis needs both REST URL and token");
+if (config.redisUrl && !config.cacheNamespace)
+  throw new Error("Redis needs a distinct CACHE_NAMESPACE");
 if (!["sync", "pubsub"].includes(config.scanMode))
   throw new Error("Invalid SCAN_MODE");
 if (

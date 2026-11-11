@@ -2,6 +2,7 @@ import pg from "pg";
 import { randomUUID } from "node:crypto";
 import { AppError, type Discovered, type Entry, type Source } from "./types.ts";
 import { migrate } from "./migrations.ts";
+import type { FeedCache } from "./feed-cache.ts";
 
 export const schemaSql = `
 CREATE TABLE IF NOT EXISTS sources (
@@ -19,7 +20,20 @@ CREATE INDEX IF NOT EXISTS articles_chronological ON articles (published_at DESC
 CREATE INDEX IF NOT EXISTS articles_source ON articles (source_id);
 `;
 export class Repository {
-  constructor(public pool: pg.Pool) {}
+  constructor(
+    public pool: pg.Pool,
+    private cache?: FeedCache,
+  ) {}
+  get cacheEnabled() {
+    return !!this.cache;
+  }
+  async feedRevision(): Promise<string> {
+    return (
+      await this.pool.query(
+        "SELECT revision::text FROM feed_cache_state WHERE id=1",
+      )
+    ).rows[0].revision;
+  }
   async migrate() {
     await migrate(this.pool);
   }
@@ -82,6 +96,9 @@ export class Repository {
           discovery.method,
         ],
       );
+      await client.query(
+        "UPDATE feed_cache_state SET revision=revision+1 WHERE id=1",
+      );
       await client.query("COMMIT");
       return { id };
     } catch (e: any) {
@@ -138,6 +155,10 @@ export class Repository {
           "UPDATE scan_tasks SET status='complete',added=$2,finished_at=now(),owner=NULL,lease_until=NULL,error=NULL WHERE id=$1",
           [task.id, added],
         );
+      // Commit the generation with the data, even when Redis is unavailable or absent on the worker.
+      await client.query(
+        "UPDATE feed_cache_state SET revision=revision+1 WHERE id=1",
+      );
       await client.query("COMMIT");
       return added;
     } catch (e) {
@@ -174,12 +195,39 @@ export class Repository {
     }
   }
   async remove(id: string) {
-    return (
-      (await this.pool.query("DELETE FROM sources WHERE id=$1", [id]))
-        .rowCount! > 0
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const removed =
+        (await client.query("DELETE FROM sources WHERE id=$1", [id]))
+          .rowCount! > 0;
+      if (removed)
+        await client.query(
+          "UPDATE feed_cache_state SET revision=revision+1 WHERE id=1",
+        );
+      await client.query("COMMIT");
+      return removed;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+  async feed(limit = 50, offset = 0, revision?: string) {
+    if (!this.cache) return this.feedFromDatabase(limit, offset);
+    return this.cache.read(
+      revision ?? (await this.feedRevision()),
+      limit,
+      offset,
+      () => this.feedFromDatabase(limit, offset),
     );
   }
-  async feed(limit = 50, offset = 0) {
+  private async feedFromDatabase(limit: number, offset: number) {
+    if (this.cache)
+      console.log(
+        JSON.stringify({ event: "feed_database_read", limit, offset }),
+      );
     const [items, count] = await Promise.all([
       this.pool.query(
         `SELECT a.id::text,a.title,a.url,a.published_at,s.name AS source_name,s.id AS source_id FROM articles a JOIN sources s ON a.source_id=s.id ORDER BY a.published_at DESC NULLS LAST,a.id DESC LIMIT $1 OFFSET $2`,

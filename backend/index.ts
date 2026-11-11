@@ -11,6 +11,7 @@ import { databaseConfig } from "./database-config.ts";
 import { TaskStore } from "./task-store.ts";
 import { PubSubPublisher } from "./pubsub.ts";
 import { QueuedScanner } from "./queued-scanner.ts";
+import { FeedCache, UpstashRedis, datasetNamespace } from "./feed-cache.ts";
 
 if (!config.databaseUrl)
   throw new Error(
@@ -18,7 +19,18 @@ if (!config.databaseUrl)
   );
 const pool = new pg.Pool(databaseConfig(config.databaseUrl));
 pool.on("error", () => console.error("Idle database connection failed."));
-const repo = new Repository(pool);
+const cache = config.redisUrl
+  ? new FeedCache(
+      new UpstashRedis(
+        config.redisUrl,
+        config.redisToken!,
+        config.cacheTimeoutMs,
+      ),
+      datasetNamespace(config.cacheNamespace!, config.databaseUrl),
+      config.cacheTtlSeconds,
+    )
+  : undefined;
+const repo = new Repository(pool, cache);
 await repo.migrate();
 const collector = new Collector(
   new CollectorHttp(createTransport(config.timeout)),

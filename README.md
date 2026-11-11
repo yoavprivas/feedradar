@@ -1,8 +1,8 @@
 # FeedRadar
 
-Stage C Pub/Sub local implementation, environment configuration, deployment gates and remaining
-cloud verification are described in [STAGE-C.md](STAGE-C.md). Cloud acceptance is pending;
-Redis is scheduled after Pub/Sub cloud verification. The default local scan mode is unchanged.
+Stage C Pub/Sub is deployed and cloud-verified; configuration and evidence are in
+[STAGE-C.md](STAGE-C.md). The Redis cache is locally verified and awaits its cloud release;
+see [REDIS.md](REDIS.md). Stage C remains open. The default local scan mode is unchanged.
 
 Cloud deployment, updates, backup recovery and cost controls are documented in [DEPLOYMENT.md](DEPLOYMENT.md).
 

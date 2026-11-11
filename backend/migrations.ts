@@ -32,6 +32,9 @@ export async function migrate(pool: pg.Pool) {
       );
       CREATE INDEX scan_tasks_outbox ON scan_tasks(batch_id) WHERE published_at IS NULL;
       CREATE INDEX scan_tasks_active ON scan_tasks(source_id,lease_until) WHERE status='running';`,
+      `CREATE TABLE feed_cache_state(id integer PRIMARY KEY CHECK(id=1),revision bigint NOT NULL DEFAULT 0);
+       INSERT INTO feed_cache_state(id) VALUES(1);
+       CREATE INDEX scan_batches_recent ON scan_batches(created_at DESC,id DESC);`,
     ];
     for (let i = 0; i < migrations.length; i++) {
       const version = i + 1;

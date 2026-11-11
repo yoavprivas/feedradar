@@ -1,6 +1,6 @@
 import { createHash, randomBytes, scrypt, timingSafeEqual } from "node:crypto";
 import { promisify } from "node:util";
-import type { Express, Request } from "express";
+import type { Express, Request, Response } from "express";
 import type { Repository } from "./db.ts";
 import { AppError } from "./types.ts";
 import { OAuth2Client } from "google-auth-library";
@@ -72,17 +72,20 @@ export function installAuth(
       ?.slice(name.length + 1);
     return value && /^[a-f0-9]{64}$/.test(value) ? value : "";
   };
-  const authenticated = async (req: Request) =>
-    !enabled ||
-    !!(
-      token(req) &&
-      (
-        await repo.pool.query(
-          "SELECT 1 FROM admin_sessions WHERE token_hash=$1 AND credential_version=$2 AND expires_at>now()",
-          [digest(token(req)), version],
-        )
-      ).rowCount
+  const authenticated = async (req: Request, res?: Response) => {
+    if (!enabled) return true;
+    if (!token(req)) return false;
+    // Include the generation in the existing auth query: a cache hit adds no feed DB queries.
+    const result = await repo.pool.query(
+      repo.cacheEnabled
+        ? "SELECT 1,(SELECT revision::text FROM feed_cache_state WHERE id=1) AS feed_revision FROM admin_sessions WHERE token_hash=$1 AND credential_version=$2 AND expires_at>now()"
+        : "SELECT 1 FROM admin_sessions WHERE token_hash=$1 AND credential_version=$2 AND expires_at>now()",
+      [digest(token(req)), version],
     );
+    if (res && result.rows[0]?.feed_revision)
+      res.locals.feedRevision = result.rows[0].feed_revision;
+    return !!result.rowCount;
+  };
   app.get("/api/auth/session", async (req, res) =>
     res.json({ required: enabled, authenticated: await authenticated(req) }),
   );
@@ -137,8 +140,8 @@ export function installAuth(
     });
     res.status(204).end();
   });
-  app.use("/api", async (req, _res, next) => {
-    if (!(await authenticated(req)))
+  app.use("/api", async (req, res, next) => {
+    if (!(await authenticated(req, res)))
       throw new AppError("UNAUTHORIZED", "", 401);
     next();
   });

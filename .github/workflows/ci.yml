@@ -42,6 +42,7 @@ jobs:
         run: pnpm test:browser
         env:
           BROWSER_SCAN_MODE: pubsub
+          BROWSER_FEED_CACHE: "true"
       - name: Build and verify container persistence
         run: |
           printf 'DOCKER_DB_PASSWORD=%s\n' "$(openssl rand -hex 32)" > .env.docker

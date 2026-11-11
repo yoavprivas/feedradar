@@ -13,6 +13,8 @@ import { hashPassword } from "../../backend/security.ts";
 import { QueuedScanner } from "../../backend/queued-scanner.ts";
 import { TaskStore } from "../../backend/task-store.ts";
 import { TaskWorker } from "../../backend/task-worker.ts";
+import { FeedCache } from "../../backend/feed-cache.ts";
+import { FakeRedis } from "../helpers/fake-redis.ts";
 
 if (!process.env.TEST_DATABASE_URL)
   throw new Error("TEST_DATABASE_URL required");
@@ -23,7 +25,11 @@ const pool = new pg.Pool({
   connectionString: process.env.TEST_DATABASE_URL,
   options: `-c search_path=${schema}`,
 });
-const repo = new Repository(pool);
+const feedCache =
+  process.env.BROWSER_FEED_CACHE === "true"
+    ? new FeedCache(new FakeRedis(), `browser:${schema}:admin`)
+    : undefined;
+const repo = new Repository(pool, feedCache);
 await repo.migrate();
 let latest = false;
 const collector = new Collector({
@@ -137,7 +143,7 @@ try {
   assert.deepEqual(errors, []);
   assert.deepEqual(deliveryErrors, []);
   console.log(
-    `Browser passed (${queued ? "queued, simulated transport" : "sync"}): login/rejection, add, collection, refresh, persistence on reload, logout, RTL widths 320/390/768/1440, no page errors.`,
+    `Browser passed (${queued ? "queued, simulated transport" : "sync"}, cache=${!!feedCache}): login/rejection, add, collection, refresh, persistence on reload, logout, RTL widths 320/390/768/1440, no page errors.`,
   );
 } finally {
   await browser?.close();
