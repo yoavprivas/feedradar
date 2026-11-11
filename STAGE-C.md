@@ -1,9 +1,10 @@
 # Stage C — Pub/Sub implementation and release gate
 
-Status, 2026-11-11: Pub/Sub cloud acceptance PASSED after explicit owner approval of push,
-GCP/IAM configuration and deployment. Production source is e83089214bd7efa6c4c1c61f9445771ffde1bfed.
-Redis was implemented locally afterward; its separate cloud approval/credentials/verification
-remain pending. See [REDIS.md](REDIS.md). Stage C as a whole is NOT complete.
+Status, 2026-11-11: Stage C COMPLETE. Pub/Sub cloud acceptance passed first, then Redis was
+deployed and cloud-verified after the owner's instruction to finish Stage C and creation of
+the two Redis secrets. Production source: 29d843b7c62921ba69405c59ea4db4b2041349e3; web revision
+feedradar-00007-x67, private worker feedradar-worker-00003-6dm. See [REDIS.md](REDIS.md) for the
+final cache/TTL/invalidation/fallback evidence. The Pub/Sub phase evidence below is retained.
 
 ## Architecture
 

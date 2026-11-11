@@ -1,8 +1,9 @@
 # FeedRadar cloud operations
 
-Stage C Pub/Sub deployment and cloud verification passed on 2026-11-11; see [STAGE-C.md](STAGE-C.md).
-Redis was implemented locally afterward and awaits its own cloud release/verification;
-see [REDIS.md](REDIS.md). Stage C as a whole remains open.
+Stage C is complete and cloud-verified as of 2026-11-11. Pub/Sub operation is documented
+in [STAGE-C.md](STAGE-C.md), and Redis configuration/verification in [REDIS.md](REDIS.md).
+Accepted production source: 29d843b7c62921ba69405c59ea4db4b2041349e3; web feedradar-00007-x67,
+private worker feedradar-worker-00003-6dm. Subsequent documentation-only commits need no runtime redeployment.
 
 ## Existing environment
 
@@ -11,6 +12,12 @@ see [REDIS.md](REDIS.md). Stage C as a whole remains open.
 - Cloud Run `feedradar`, `us-central1`: request-based CPU, 1 vCPU, 512 MiB, min 0, max 1, concurrency 8, request timeout 300 seconds.
 - Supabase project `pdxumhjoltavlragfnec`, Sydney session pooler on port 5432; private `feedradar` schema and dedicated `feedradar_app` role. Public CA is in `backend/certs`; TLS hostname/certificate verification is mandatory.
 - Administrator password hash and database URL are in Secret Manager. GitHub stores no Google service-account key or application password.
+- Private Cloud Run `feedradar-worker`, same region/image: request-based CPU, min 0, max 1,
+  concurrency 2, timeout 300 seconds. Authenticated Pub/Sub pushes keep the request alive until
+  its article/task transaction commits. Its runtime has only the database secret.
+- Web uses optional Upstash Redis via Secret Manager references `feedradar-redis-rest-url`
+  and `feedradar-redis-rest-token`, TTL 60, timeout 500 ms. Worker invalidates through the
+  transactional PostgreSQL generation counter and does not receive Redis credentials.
 - External Scheduler `feedradar-hourly`, cron `28 * * * *`, UTC. This is one regular execution per hour; at most two retries, with 120–300 second backoff and a 20-minute retry window.
 - `SCHEDULER_JOB_NAME` must be the short ID **`feedradar-hourly`**, not its full resource path. OIDC verifies the service-account email, issuer, signature, expiry and audience before this additional job check. [Google header documentation](https://docs.cloud.google.com/scheduler/docs/configuring/deduplicate-job-requests).
 - The canonical URL above is required by the host/origin checks. Use `/api/health` for an external database health check; `/healthz` works inside the container but the public Google frontend returned 404 for that path.
@@ -26,9 +33,16 @@ The workflow builds in GitHub, uploads to the existing Artifact Registry reposit
 
 `repo:yoavprivas@352892435/feedradar@1446982795:environment:production`
 
-The backup identity uses environment `backup`. GitHub environments restrict deployment to main. Separate accounts are used for deploy, runtime, scheduler and backup. The deploy account has Cloud Run developer, writer access to its image repository, and permission to use the runtime account. Runtime can read only its two named secrets. Backup can read the database secret and create/read encrypted objects in its own bucket; it cannot delete them. No owner/editor role was granted to these accounts.
+The backup identity uses environment `backup`. GitHub environments restrict deployment to main. Separate accounts are used for deploy, web runtime, worker runtime, Pub/Sub push, scheduler and backup. The deploy account has Cloud Run developer, writer access to its image repository, and permission to use the web/worker runtime accounts. Web runtime can read only its four named secrets (database, administrator hash, Redis URL and Redis token); worker runtime reads only the database secret. Backup can read the database secret and create/read encrypted objects in its own bucket; it cannot delete them. No owner/editor role was granted to these accounts.
 
 Repository variables required by the workflows: `GCP_PROJECT_ID`, `WIF_PROVIDER`, `DEPLOY_SERVICE_ACCOUNT`, `RUNTIME_SERVICE_ACCOUNT`, `PUBLIC_ORIGIN`, `SCHEDULER_SERVICE_ACCOUNT`, `SCHEDULER_JOB_NAME`, `CLOUD_DEPLOY_ENABLED`, `BACKUP_SERVICE_ACCOUNT`, `BACKUP_BUCKET`, `BACKUP_PUBLIC_KEY`, `CLOUD_BACKUP_ENABLED`. Public-key material is intentionally not secret; the private recovery key must never be stored in the repository or backup bucket.
+
+Stage C also uses `WORKER_ENABLED=true`, `PUBSUB_ENABLED=true`, `REDIS_ENABLED=true`,
+`CACHE_NAMESPACE=feedradar:production`, `PUBSUB_TOPIC`, `WORKER_SERVICE_ACCOUNT`, `WORKER_ORIGIN`,
+`PUBSUB_PUSH_SERVICE_ACCOUNT`, `PUBSUB_SUBSCRIPTION`, and `PUBSUB_DEAD_SUBSCRIPTION`.
+Keep credential values in Secret Manager. For releases affecting the generation contract,
+pause Scheduler and drain pending async tasks before worker-then-web rollout; restore the
+original hourly schedule after verification. On database restore, rotate the cache namespace.
 
 ## Backup and recovery
 

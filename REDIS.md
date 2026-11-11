@@ -1,9 +1,10 @@
 # Redis cache — implementation and release instructions
 
-Status, 2026-11-11: local implementation verified. Redis is NOT deployed or cloud-verified.
-Pub/Sub cloud verification passed first; the accepted Pub/Sub production source is commit
-`e83089214bd7efa6c4c1c61f9445771ffde1bfed`. The owner reports an existing Upstash Free database
-`feedradar-cache` on GCP us-central1. Its credentials remain in the owner's password manager.
+Status, 2026-11-11: Redis is deployed and cloud-verified; Stage C is COMPLETE. Pub/Sub was
+verified first. Production source: `29d843b7c62921ba69405c59ea4db4b2041349e3`; web revision
+`feedradar-00007-x67`, private worker `feedradar-worker-00003-6dm`. The owner supplied their
+existing Upstash Free database `feedradar-cache` on GCP us-central1 through two Secret Manager
+secrets. Values were never printed, committed or passed through GitHub variables.
 
 ## Behavior
 
@@ -88,7 +89,7 @@ quotas and usage-based cloud services still need monitoring.
 
 Direct console: https://console.cloud.google.com/security/secret-manager?project=project-43592e87-a1ec-43b7-bb4
 
-## Verified locally and remaining cloud gates
+## Verification
 
 Unit tests cover hits/misses, expiry, scopes/pagination, stale in-flight fills, offline writes,
 recovery, malformed values, coalescing, provider failures and bounded REST timeouts. Integration
@@ -99,11 +100,35 @@ back article writes; Redis failure preserves HTTP 200 and current PostgreSQL dat
 
 The browser test exercises queued scanning and cached-feed refresh with simulated Redis and
 message transport, including login/logout and mobile widths. Docker verifies the actual image,
-migration 4, worker startup and existing persistence behavior. These are not cloud Redis tests.
+migration 4, worker startup and existing persistence behavior. Exact-source CI passed:
+https://github.com/yoavprivas/feedradar/actions/runs/42996449212 . Deployment passed:
+https://github.com/yoavprivas/feedradar/actions/runs/42996960296 . CI ran 43 unit tests,
+53 integration tests, both browser modes and Docker build/persistence checks successfully.
 
-Remaining acceptance: real Cloud Run to Upstash miss then hit, actual TTL, generation change
-after cloud collection, fresh article display, actual cloud fallback verification, and logs
-showing hits avoid feed_database_read. Keep Stage C open until these pass.
+Actual cloud checks also passed:
+
+- Cloud Run populated Upstash; the following authenticated request was a cache hit. The real
+  key TTL was 59 seconds, then expired and was refilled with a 60-second TTL.
+- Production manual Pub/Sub batch 6c494c16-eb92-4487-98d0-c520f4f7e327 completed both sources,
+  added four articles and advanced generation 0 -> 2. New articles were visible through the
+  refreshed API/cache. All 234 pre-release articles and both sources were preserved (238 after).
+- Actual Scheduler batch 3f5c4f37-b9cd-4c44-b357-6dea12016a0c, key
+  scheduled:2026-11-11T09:47:00.000Z, completed both tasks and advanced generation 2 -> 4.
+  The updated feed was cached and read successfully. Original hourly cron 28 * * * * UTC is
+  enabled; a bounded minute-cron test window was restored immediately after batch creation.
+- Dedicated-page production logs recorded four cache_miss/four feed_database_read events
+  and three cache_hit events. Hits bypassed feed reads; authentication remained mandatory.
+- A temporary private web service from the same image, configured with a deliberately invalid
+  Redis token, returned HTTP 200/current PostgreSQL feed for three requests. Logs showed one
+  cache_error, two circuit-open cache_bypass events and three feed_database_read events.
+  Production Redis configuration was not disrupted; the temporary service was removed.
+- Final health returned 200; anonymous feed access returned 401; anonymous worker requests
+  returned 403. Migrations 1–4 are applied, no tasks remain pending, and both services have
+  min=0/max=1. Only the web runtime has access to the two Redis secrets.
+
+These request timings were observed for one cold/warm sequence: 1,826 ms first request and
+371 ms cached request. This is not an isolated latency benchmark; cold-start/connection warmup
+also affect the result. The verified structural saving is two feed queries on a cache hit.
 
 References:
 - https://upstash.com/docs/redis/features/restapi

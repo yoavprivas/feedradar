@@ -1,8 +1,8 @@
 # FeedRadar
 
-Stage C Pub/Sub is deployed and cloud-verified; configuration and evidence are in
-[STAGE-C.md](STAGE-C.md). The Redis cache is locally verified and awaits its cloud release;
-see [REDIS.md](REDIS.md). Stage C remains open. The default local scan mode is unchanged.
+Stage C is complete: real Pub/Sub processing and Upstash Redis cache are deployed and
+cloud-verified. Configuration and evidence are in [STAGE-C.md](STAGE-C.md) and
+[REDIS.md](REDIS.md). The default local scan mode remains synchronous with cache disabled.
 
 Cloud deployment, updates, backup recovery and cost controls are documented in [DEPLOYMENT.md](DEPLOYMENT.md).
 
@@ -13,6 +13,8 @@ FeedRadar brings articles from websites you choose into a focused, chronological
 - Add a website URL and discover supported RSS, Atom, JSON Feed, news sitemaps, WordPress REST feeds, or structured HTML.
 - Follow and remove sources; collect articles manually or on a configurable schedule.
 - Deduplicate articles by source and URL, isolate collection failures, and preserve articles in PostgreSQL.
+- In cloud mode, enqueue scans in Pub/Sub for a private scale-to-zero worker with retries and dead-letter handling.
+- Optionally cache authenticated article pages in Upstash Redis with transactional invalidation and PostgreSQL fallback.
 - Sort by publication time; missing or ambiguous timestamps remain unknown and sort last.
 - Responsive Hebrew UI, optional administrator password authentication, and external scheduler support.
 - Respect robots.txt and enforce request limits and protections against requests to private networks.
