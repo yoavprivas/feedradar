@@ -19,7 +19,16 @@ export const config = {
   schedulerAudience: process.env.SCHEDULER_AUDIENCE,
   schedulerEmail: process.env.SCHEDULER_SERVICE_ACCOUNT,
   schedulerJob: process.env.SCHEDULER_JOB_NAME,
+  scanMode: process.env.SCAN_MODE ?? "sync",
+  pubsubTopic: process.env.PUBSUB_TOPIC,
 };
+if (!["sync", "pubsub"].includes(config.scanMode))
+  throw new Error("Invalid SCAN_MODE");
+if (
+  config.scanMode === "pubsub" &&
+  (!config.pubsubTopic || config.schedulerMode !== "external")
+)
+  throw new Error("Pub/Sub requires PUBSUB_TOPIC and SCHEDULER_MODE=external");
 if (!["local", "external"].includes(config.schedulerMode))
   throw new Error("Invalid SCHEDULER_MODE");
 if (!["local", "password"].includes(config.authMode))

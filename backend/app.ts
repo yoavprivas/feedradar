@@ -4,6 +4,7 @@ import path from "node:path";
 import type { Repository } from "./db.ts";
 import type { Collector } from "./collector.ts";
 import type { Scanner } from "./scanner.ts";
+import { QueuedScanner } from "./queued-scanner.ts";
 import { AppError } from "./types.ts";
 import { normalizeUrl } from "./network.ts";
 import {
@@ -15,7 +16,7 @@ import {
 export function createApp(
   repo: Repository,
   collector: Collector,
-  scanner: Scanner,
+  scanner: Scanner | QueuedScanner,
   staticDir?: string,
   security: SecurityOptions = {},
 ) {
@@ -62,7 +63,7 @@ export function createApp(
       false,
       `scheduled:${new Date(time).toISOString()}`,
     );
-    res.json(result);
+    res.status("accepted" in result ? 202 : 200).json(result);
   });
   // Explicit canonical origin, never trust forwarded Host/Proto supplied by clients.
   app.use((req, res, next) => {
@@ -106,6 +107,18 @@ export function createApp(
     res.json({ status: "ok", database: "postgresql" });
   });
   installAuth(app, repo, security);
+  app.get("/api/scans/:id", async (req, res) => {
+    if (!(scanner instanceof QueuedScanner))
+      throw new AppError("NOT_FOUND", "", 404);
+    const id = String(req.params.id);
+    if (
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        id,
+      )
+    )
+      throw new AppError("INVALID_INPUT");
+    res.json(await scanner.tasks.batch(id));
+  });
   app.get("/api/state", async (_req, res) => {
     res.json({
       sources: await repo.sources(),
@@ -175,7 +188,8 @@ export function createApp(
     res.status(204).end();
   });
   app.post("/api/refresh", async (_req, res) => {
-    res.json(await scanner.scan(true));
+    const result = await scanner.scan(true);
+    res.status("accepted" in result ? 202 : 200).json(result);
   });
   app.use("/api", (_req, res) => res.status(404).json({ error: "NOT_FOUND" }));
   if (staticDir) {

@@ -120,6 +120,7 @@ export function App() {
   const [addError, setAddError] = useState("");
   const [adding, setAdding] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [pendingBatch, setPendingBatch] = useState<string | null>(null);
   const [more, setMore] = useState(false);
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
@@ -161,6 +162,33 @@ export function App() {
   useEffect(() => {
     void load();
   }, [load]);
+  useEffect(() => {
+    if (!pendingBatch) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      try {
+        const batch = await api<{ status: string; result: ScanResult }>(
+          `/scans/${pendingBatch}`,
+        );
+        if (cancelled) return;
+        if (batch.status === "complete") {
+          setPendingBatch(null);
+          showScanResult(batch.result);
+          await load(true);
+          return;
+        }
+      } catch (error) {
+        if (!cancelled) setNotice({ kind: "error", text: message(error) });
+      }
+      if (!cancelled) timer = setTimeout(poll, 3000);
+    };
+    void poll();
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [pendingBatch, load]);
   useEffect(() => {
     const timer = setInterval(() => {
       if (!document.hidden && !adding && !refreshing && !more) void load(true);
@@ -222,29 +250,39 @@ export function App() {
     setRefreshing(true);
     setNotice(null);
     try {
-      const result = await api<ScanResult>("/refresh", {
+      const result = await api<
+        ScanResult | { accepted: true; batchId: string }
+      >("/refresh", {
         method: "POST",
         body: "{}",
       });
-      const key = result.failed
-        ? result.succeeded
-          ? "feed.refreshPartial"
-          : "feed.refreshFailed"
-        : result.added === 1
-          ? "feed.refreshSuccessOne"
-          : result.added
-            ? "feed.refreshSuccess"
-            : "feed.refreshNoNew";
-      setNotice({
-        kind: result.failed ? "warning" : "success",
-        text: c(key, { count: result.added }),
-      });
+      if ("accepted" in result) {
+        setPendingBatch(result.batchId);
+        await load(true);
+        return;
+      }
+      showScanResult(result);
       await load(true);
     } catch (error) {
       setNotice({ kind: "error", text: message(error) });
     } finally {
       setRefreshing(false);
     }
+  }
+  function showScanResult(result: ScanResult) {
+    const key = result.failed
+      ? result.succeeded
+        ? "feed.refreshPartial"
+        : "feed.refreshFailed"
+      : result.added === 1
+        ? "feed.refreshSuccessOne"
+        : result.added
+          ? "feed.refreshSuccess"
+          : "feed.refreshNoNew";
+    setNotice({
+      kind: result.failed ? "warning" : "success",
+      text: c(key, { count: result.added }),
+    });
   }
   async function remove(id: string) {
     setRemoving(id);
@@ -284,7 +322,7 @@ export function App() {
       setMore(false);
     }
   }
-  const busy = refreshing || !!state?.scanning;
+  const busy = refreshing || !!pendingBatch || !!state?.scanning;
   const failed = state?.sources.filter((s) => s.last_error).length ?? 0;
   return (
     <div className="app-shell">

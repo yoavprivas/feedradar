@@ -18,6 +18,20 @@ export async function migrate(pool: pg.Pool) {
       INSERT INTO scan_control(id) VALUES(1);
       CREATE TABLE scan_runs (run_key text PRIMARY KEY, owner uuid NOT NULL, status text NOT NULL, attempts integer NOT NULL DEFAULT 1, started_at timestamptz NOT NULL DEFAULT now(), finished_at timestamptz, result jsonb, progress integer NOT NULL DEFAULT 0);
     `,
+      `CREATE TABLE scan_batches (
+        id uuid PRIMARY KEY, run_key text NOT NULL UNIQUE,
+        created_at timestamptz NOT NULL DEFAULT now()
+      );
+      CREATE TABLE scan_tasks (
+        id uuid PRIMARY KEY, batch_id uuid NOT NULL REFERENCES scan_batches(id) ON DELETE CASCADE,
+        source_id uuid NOT NULL, status text NOT NULL DEFAULT 'pending'
+          CHECK(status IN ('pending','running','retry','complete','dead')),
+        owner uuid, lease_until timestamptz, attempts integer NOT NULL DEFAULT 0,
+        added integer NOT NULL DEFAULT 0, error text, published_at timestamptz,
+        finished_at timestamptz, UNIQUE(batch_id,source_id)
+      );
+      CREATE INDEX scan_tasks_outbox ON scan_tasks(batch_id) WHERE published_at IS NULL;
+      CREATE INDEX scan_tasks_active ON scan_tasks(source_id,lease_until) WHERE status='running';`,
     ];
     for (let i = 0; i < migrations.length; i++) {
       const version = i + 1;

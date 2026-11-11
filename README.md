@@ -1,5 +1,9 @@
 # FeedRadar
 
+Stage C Pub/Sub local implementation, environment configuration, deployment gates and remaining
+cloud verification are described in [STAGE-C.md](STAGE-C.md). Cloud acceptance is pending;
+Redis is scheduled after Pub/Sub cloud verification. The default local scan mode is unchanged.
+
 Cloud deployment, updates, backup recovery and cost controls are documented in [DEPLOYMENT.md](DEPLOYMENT.md).
 
 FeedRadar brings articles from websites you choose into a focused, chronological feed. Its Hebrew, right-to-left interface shows the headline, source, and publication time, with a link to the original article, without images or summaries.

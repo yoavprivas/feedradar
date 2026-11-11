@@ -4,7 +4,7 @@ const compose = (...args) =>
   execFileSync("docker", ["compose", "--env-file", ".env.docker", ...args], {
     encoding: "utf8",
   });
-const base = "http://127.0.0.1:4311";
+const base = process.env.DOCKER_TEST_ORIGIN ?? "http://127.0.0.1:4311";
 async function ready() {
   for (let i = 0; i < 60; i++) {
     try {

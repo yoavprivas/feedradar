@@ -38,6 +38,10 @@ jobs:
       - run: pnpm build
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm test:browser
+      - name: Verify asynchronous scan browser behavior (simulated transport)
+        run: pnpm test:browser
+        env:
+          BROWSER_SCAN_MODE: pubsub
       - name: Build and verify container persistence
         run: |
           printf 'DOCKER_DB_PASSWORD=%s\n' "$(openssl rand -hex 32)" > .env.docker

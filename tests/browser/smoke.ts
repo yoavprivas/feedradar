@@ -10,6 +10,9 @@ import { Collector } from "../../backend/collector.ts";
 import { Scanner } from "../../backend/scanner.ts";
 import { createApp } from "../../backend/app.ts";
 import { hashPassword } from "../../backend/security.ts";
+import { QueuedScanner } from "../../backend/queued-scanner.ts";
+import { TaskStore } from "../../backend/task-store.ts";
+import { TaskWorker } from "../../backend/task-worker.ts";
 
 if (!process.env.TEST_DATABASE_URL)
   throw new Error("TEST_DATABASE_URL required");
@@ -50,7 +53,31 @@ const collector = new Collector({
     }),
   }),
 });
-const scanner = new Scanner(repo, collector, 3600000, 0);
+const queued = process.env.BROWSER_SCAN_MODE === "pubsub";
+const worker = new TaskWorker(new TaskStore(repo), collector);
+const deliveries = new Set<Promise<void>>();
+const deliveryErrors: unknown[] = [];
+const scanner = queued
+  ? new QueuedScanner(
+      new TaskStore(repo),
+      {
+        publish: async (messages) => {
+          // Simulated transport for browser behavior only; real GCP delivery is a release gate.
+          for (const message of messages) {
+            const delivery = new Promise<void>((r) => setTimeout(r, 150))
+              .then(() => worker.process(message.taskId))
+              .catch((error) => {
+                deliveryErrors.push(error);
+              });
+            deliveries.add(delivery);
+            void delivery.finally(() => deliveries.delete(delivery));
+          }
+        },
+      },
+      3600000,
+      0,
+    )
+  : new Scanner(repo, collector, 3600000, 0);
 const password = "browser-fixture-password";
 const app = createApp(repo, collector, scanner, path.resolve("dist"), {
   authMode: "password",
@@ -98,7 +125,7 @@ try {
       ),
     );
     await page.screenshot({
-      path: `test-results/stage-b-${width}.png`,
+      path: `test-results/${queued ? "stage-c" : "stage-b"}-${width}.png`,
       fullPage: true,
     });
   }
@@ -108,11 +135,14 @@ try {
   await page.getByLabel("סיסמת מנהל").waitFor();
   assert.equal((await context.request.get(base + "/api/feed")).status(), 401);
   assert.deepEqual(errors, []);
+  assert.deepEqual(deliveryErrors, []);
   console.log(
-    "Browser passed: login/rejection, add, collection, refresh, persistence on reload, logout, RTL widths 320/390/768/1440, no page errors.",
+    `Browser passed (${queued ? "queued, simulated transport" : "sync"}): login/rejection, add, collection, refresh, persistence on reload, logout, RTL widths 320/390/768/1440, no page errors.`,
   );
 } finally {
   await browser?.close();
+  worker.stop();
+  await Promise.allSettled([...deliveries]);
   await scanner.stop();
   await new Promise<void>((r) => server.close(() => r()));
   await pool.end();

@@ -72,7 +72,7 @@ test("stage B authentication, durable coordination and migrations", async (t) =>
         assert.equal(
           (await pool.query("SELECT count(*)::int n FROM schema_migrations"))
             .rows[0].n,
-          2,
+          3,
         );
       },
     );

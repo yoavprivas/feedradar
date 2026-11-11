@@ -32,6 +32,10 @@ export class Repository {
     );
     return result.rows;
   }
+  async source(id: string): Promise<Source | undefined> {
+    return (await this.pool.query("SELECT * FROM sources WHERE id=$1", [id]))
+      .rows[0];
+  }
   async hasSource(url: string) {
     return (
       (
@@ -88,10 +92,22 @@ export class Repository {
       client.release();
     }
   }
-  async saveScan(id: string, list: Entry[], owner?: string) {
+  async saveScan(
+    id: string,
+    list: Entry[],
+    owner?: string,
+    task?: { id: string; owner: string },
+  ) {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
+      if (task) {
+        const lease = await client.query(
+          "SELECT 1 FROM scan_tasks WHERE id=$1 AND owner=$2 AND source_id=$3 AND status='running' AND lease_until>now() FOR UPDATE",
+          [task.id, task.owner, id],
+        );
+        if (!lease.rowCount) throw new AppError("SCAN_LEASE_LOST", "", 503);
+      }
       if (owner) {
         const lease = await client.query(
           "SELECT 1 FROM scan_control WHERE id=1 AND owner=$1 AND lease_until>now() FOR UPDATE",
@@ -104,6 +120,11 @@ export class Repository {
         [id],
       );
       if (!source.rowCount) {
+        if (task)
+          await client.query(
+            "UPDATE scan_tasks SET status='complete',finished_at=now(),owner=NULL,lease_until=NULL WHERE id=$1",
+            [task.id],
+          );
         await client.query("COMMIT");
         return 0;
       }
@@ -112,6 +133,11 @@ export class Repository {
         "UPDATE sources SET last_checked_at=now(),last_success_at=now(),last_error=NULL WHERE id=$1",
         [id],
       );
+      if (task)
+        await client.query(
+          "UPDATE scan_tasks SET status='complete',added=$2,finished_at=now(),owner=NULL,lease_until=NULL,error=NULL WHERE id=$1",
+          [task.id, added],
+        );
       await client.query("COMMIT");
       return added;
     } catch (e) {

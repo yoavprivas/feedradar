@@ -8,6 +8,9 @@ import { Collector } from "./collector.ts";
 import { Scanner } from "./scanner.ts";
 import { createApp } from "./app.ts";
 import { databaseConfig } from "./database-config.ts";
+import { TaskStore } from "./task-store.ts";
+import { PubSubPublisher } from "./pubsub.ts";
+import { QueuedScanner } from "./queued-scanner.ts";
 
 if (!config.databaseUrl)
   throw new Error(
@@ -20,12 +23,20 @@ await repo.migrate();
 const collector = new Collector(
   new CollectorHttp(createTransport(config.timeout)),
 );
-const scanner = new Scanner(
-  repo,
-  collector,
-  config.intervalMinutes * 60000,
-  config.minRefreshSeconds * 1000,
-);
+const scanner =
+  config.scanMode === "pubsub"
+    ? new QueuedScanner(
+        new TaskStore(repo),
+        new PubSubPublisher(config.pubsubTopic!),
+        config.intervalMinutes * 60000,
+        config.minRefreshSeconds * 1000,
+      )
+    : new Scanner(
+        repo,
+        collector,
+        config.intervalMinutes * 60000,
+        config.minRefreshSeconds * 1000,
+      );
 const app = createApp(
   repo,
   collector,

@@ -62,14 +62,47 @@ jobs:
           PUBLIC_ORIGIN: ${{ vars.PUBLIC_ORIGIN }}
           SCHEDULER_ACCOUNT: ${{ vars.SCHEDULER_SERVICE_ACCOUNT }}
           SCHEDULER_JOB: ${{ vars.SCHEDULER_JOB_NAME }}
+          PUBSUB_ENABLED: ${{ vars.PUBSUB_ENABLED }}
+          PUBSUB_TOPIC: ${{ vars.PUBSUB_TOPIC }}
+          WORKER_ACCOUNT: ${{ vars.WORKER_SERVICE_ACCOUNT }}
+          WORKER_ORIGIN: ${{ vars.WORKER_ORIGIN }}
+          PUSH_ACCOUNT: ${{ vars.PUBSUB_PUSH_SERVICE_ACCOUNT }}
+          SUBSCRIPTION: ${{ vars.PUBSUB_SUBSCRIPTION }}
+          DEAD_SUBSCRIPTION: ${{ vars.PUBSUB_DEAD_SUBSCRIPTION }}
+          WORKER_ENABLED: ${{ vars.WORKER_ENABLED }}
         run: |
           python - <<'PY'
           import json, os
           if os.environ['PROJECT'] != 'project-43592e87-a1ec-43b7-bb4': raise ValueError('Deployment restricted to the approved existing project')
           values = {"AUTH_MODE":"password", "SCHEDULER_MODE":"external", "SCAN_INTERVAL_MINUTES":"60", "DATABASE_CA_FILE":"/app/backend/certs/supabase-ca.crt", "PUBLIC_ORIGIN":os.environ["PUBLIC_ORIGIN"], "SCHEDULER_AUDIENCE":os.environ["PUBLIC_ORIGIN"], "SCHEDULER_SERVICE_ACCOUNT":os.environ["SCHEDULER_ACCOUNT"], "SCHEDULER_JOB_NAME":os.environ["SCHEDULER_JOB"]}
+          for flag in ('PUBSUB_ENABLED','WORKER_ENABLED'):
+            if os.environ[flag] not in ('','false','true'): raise ValueError('Invalid '+flag)
+          enabled = os.environ['PUBSUB_ENABLED'] == 'true'
+          worker_enabled = os.environ['WORKER_ENABLED'] == 'true'
+          if enabled and not worker_enabled: raise ValueError('Pub/Sub requires worker deployment')
+          values['SCAN_MODE'] = 'pubsub' if enabled else 'sync'
+          if enabled:
+            values['PUBSUB_TOPIC'] = os.environ['PUBSUB_TOPIC']
+          if worker_enabled:
+            worker = {'DATABASE_CA_FILE':values['DATABASE_CA_FILE'], 'PUBSUB_PUSH_AUDIENCE':os.environ['WORKER_ORIGIN'], 'PUBSUB_PUSH_SERVICE_ACCOUNT':os.environ['PUSH_ACCOUNT'], 'PUBSUB_SUBSCRIPTION':os.environ['SUBSCRIPTION'], 'PUBSUB_DEAD_SUBSCRIPTION':os.environ['DEAD_SUBSCRIPTION']}
+            if not all(worker.values()) or not os.environ['WORKER_ACCOUNT']: raise ValueError('Missing worker configuration')
+            with open('worker-env.json','w') as f: json.dump(worker,f)
           if not all(values.values()): raise ValueError('Missing deployment configuration')
           with open('cloud-env.json','w') as f: json.dump(values,f)
           PY
+          if [ "$WORKER_ENABLED" = "true" ]; then
+            gcloud run deploy feedradar-worker --project "$PROJECT" --region "$REGION" --image "$IMAGE" \
+              --service-account "$WORKER_ACCOUNT" --port 8080 --cpu 1 --memory 512Mi \
+              --min 0 --max 1 --concurrency 2 --timeout 300 --cpu-throttling \
+              --command node --args=--import,tsx,backend/worker-index.ts \
+              --env-vars-file worker-env.json \
+              --set-secrets DATABASE_URL=feedradar-database-url:latest --quiet
+            actual_worker_url="$(gcloud run services describe feedradar-worker --project "$PROJECT" --region "$REGION" --format='value(status.url)')"
+            if [ "$actual_worker_url" != "$WORKER_ORIGIN" ]; then
+              echo 'Worker URL differs from configured OIDC audience; stop before changing web service.'
+              exit 1
+            fi
+          fi
           gcloud run deploy "$SERVICE" --project "$PROJECT" --region "$REGION" --image "$IMAGE" \
             --service-account "$RUNTIME_ACCOUNT" --port 8080 --cpu 1 --memory 512Mi \
             --min 0 --max 1 --concurrency 8 --timeout 300 --cpu-throttling \
