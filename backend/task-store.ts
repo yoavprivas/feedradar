@@ -186,23 +186,29 @@ export class TaskStore {
     };
   }
   async status() {
-    const latest = (
-      await this.repo.pool.query(
-        "SELECT id FROM scan_batches ORDER BY created_at DESC,id DESC LIMIT 1",
-      )
+    // One round trip and one consistent snapshot; the database is in another region.
+    const row = (
+      await this.repo.pool.query(`WITH latest AS (
+      SELECT id FROM scan_batches ORDER BY created_at DESC,id DESC LIMIT 1
+    ), last_complete AS (
+      SELECT b.id,b.created_at FROM scan_batches b WHERE NOT EXISTS(
+        SELECT 1 FROM scan_tasks t WHERE t.batch_id=b.id AND t.status NOT IN ('complete','dead'))
+      ORDER BY b.created_at DESC,b.id DESC LIMIT 1
+    ) SELECT EXISTS(SELECT 1 FROM scan_tasks WHERE batch_id=(SELECT id FROM latest)
+        AND status NOT IN ('complete','dead')) AS scanning,
+      finished.finished_at,finished.result
+      FROM (SELECT 1) singleton LEFT JOIN LATERAL (
+        SELECT coalesce(max(t.finished_at),b.created_at) AS finished_at,
+          jsonb_build_object('added',coalesce(sum(t.added),0),'checked',count(t.id),
+            'succeeded',count(t.id) FILTER(WHERE t.status='complete'),
+            'failed',count(t.id) FILTER(WHERE t.status='dead')) AS result
+        FROM last_complete b LEFT JOIN scan_tasks t ON t.batch_id=b.id GROUP BY b.id,b.created_at
+      ) finished ON true`)
     ).rows[0];
-    const complete = (
-      await this.repo.pool.query(`SELECT b.id FROM scan_batches b
-      WHERE NOT EXISTS(SELECT 1 FROM scan_tasks t WHERE t.batch_id=b.id AND t.status NOT IN ('complete','dead'))
-      ORDER BY b.created_at DESC,b.id DESC LIMIT 1`)
-    ).rows[0];
-    const last = complete ? await this.batch(complete.id) : null;
     return {
-      scanning: latest
-        ? (await this.batch(latest.id)).status === "queued"
-        : false,
-      lastFinishedAt: last?.finishedAt ?? null,
-      lastResult: last?.result ?? null,
+      scanning: row.scanning,
+      lastFinishedAt: row.finished_at ?? null,
+      lastResult: row.result ?? null,
     };
   }
 }

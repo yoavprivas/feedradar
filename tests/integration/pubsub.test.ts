@@ -136,6 +136,27 @@ test("Pub/Sub durable jobs and authenticated HTTP worker (isolated PostgreSQL, s
     });
   try {
     await check(
+      "status retains the last finished result while a later batch is queued",
+      async () => {
+        assert.deepEqual(await tasks.status(), {
+          scanning: false,
+          lastFinishedAt: null,
+          lastResult: null,
+        });
+        await add();
+        await scanner.scan();
+        await worker.process(published[0].taskId);
+        const previous = await tasks.status();
+        assert.equal(previous.scanning, false);
+        assert(previous.lastFinishedAt);
+        await scanner.scan();
+        const pending = await tasks.status();
+        assert.equal(pending.scanning, true);
+        assert.deepEqual(pending.lastResult, previous.lastResult);
+        assert.deepEqual(pending.lastFinishedAt, previous.lastFinishedAt);
+      },
+    );
+    await check(
       "batch results and feed remain behind administrator authentication",
       async () => {
         await add();
